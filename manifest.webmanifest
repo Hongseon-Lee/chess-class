@@ -1,0 +1,16 @@
+{
+  "name": "체스 클래스",
+  "short_name": "체스 클래스",
+  "description": "처음 배우는 사람을 위한 단계별 체스 수업",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f6f3",
+  "theme_color": "#f7f6f3",
+  "icons": [
+    { "src": "./img/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./img/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./img/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

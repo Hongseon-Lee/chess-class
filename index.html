@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f7f6f3">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="체스 클래스">
+<title>체스 클래스</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./img/icon-192.png">
+<link rel="apple-touch-icon" href="./img/apple-touch-icon.png">
+<link rel="stylesheet" href="./css/app.css">
+<!-- 스크립트를 한꺼번에 받기 시작하게 한다. 없으면 하나를 받아 읽은 뒤에야 다음 것을 받는다. -->
+<link rel="modulepreload" href="./js/app.js">
+<link rel="modulepreload" href="./js/board.js">
+<link rel="modulepreload" href="./js/lesson-runner.js">
+<link rel="modulepreload" href="./js/progress.js">
+<link rel="modulepreload" href="./js/vendor/chess.js">
+</head>
+<body>
+<main id="app">
+  <p id="boot">불러오는 중…</p>
+</main>
+<script type="module" src="./js/app.js"></script>
+<script>
+// 앱이 끝내 뜨지 않을 때를 위한 안전망. 앱 스크립트를 못 읽으면(파일이 깨졌거나 받다 만 경우)
+// 위의 "불러오는 중…"이 영영 남는다. 한 번은 스스로 다시 불러오고, 그래도 안 되면 알려준다.
+setTimeout(function () {
+  var boot = document.getElementById('boot')
+  if (!boot) return
+  var retried = false
+  try {
+    retried = sessionStorage.getItem('chessclass.bootRetry') === '1'
+    sessionStorage.setItem('chessclass.bootRetry', '1')
+  } catch (e) {
+    retried = true
+  }
+  if (!retried) {
+    location.reload()
+    return
+  }
+  boot.textContent = '앱을 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요. '
+  var again = document.createElement('button')
+  again.className = 'btn'
+  again.textContent = '다시 시도'
+  again.onclick = function () { location.reload() }
+  boot.appendChild(again)
+}, 10000)
+</script>
+</body>
+</html>
