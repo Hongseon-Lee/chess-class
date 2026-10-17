@@ -175,6 +175,9 @@ p { margin: 8px 0; }
 
 .btn-lesson.done { color: var(--muted); }
 
+/* 레슨을 마친 화면에서 가장 먼저 누를 단추 */
+.btn-next { border-color: var(--accent); font-weight: 600; }
+
 .btn-lesson.locked {
   color: var(--bad);
   background: var(--bad-bg);

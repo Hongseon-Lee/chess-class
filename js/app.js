@@ -72,6 +72,15 @@ function findLesson(lessonId) {
   return null
 }
 
+// 같은 순서로 바로 다음에 오는 레슨. 마지막 레슨이거나 다음 레슨의 데이터가 깨져 있으면 null.
+function nextLesson(lessonId) {
+  const all = curriculum.units.flatMap((unit) => unit.lessons)
+  const at = all.findIndex((lesson) => lesson.id === lessonId)
+  const next = at >= 0 ? all[at + 1] : null
+  if (!next || !next.id || !Array.isArray(next.steps) || next.steps.length === 0) return null
+  return next
+}
+
 function showError(message, detail) {
   app.replaceChildren()
   app.appendChild(el('h1', null, message))
@@ -338,7 +347,13 @@ function showLesson(lessonId) {
         el('p', 'notice notice-warn', '다만 진도를 저장하지 못했습니다. 브라우저 저장 공간을 확인해 주세요.')
       )
     }
-    app.appendChild(button('목록으로', showUnitList))
+    const next = nextLesson(lessonId)
+    if (next) {
+      app.appendChild(button('다음 레슨: ' + next.title, () => showLesson(next.id), 'btn btn-next'))
+      app.appendChild(button('목록으로', showUnitList, 'btn btn-quiet'))
+    } else {
+      app.appendChild(button('목록으로', showUnitList))
+    }
   }
 
   function render() {
