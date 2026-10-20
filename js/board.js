@@ -69,6 +69,7 @@ export function createBoard(root) {
       build()
     }
     currentFen = resolveFen(fen)
+    root.dataset.fen = currentFen // 브라우저 테스트가 지금 판을 읽는다
     const game = new Chess(currentFen)
     const rows = game.board()
 
@@ -92,6 +93,7 @@ export function createBoard(root) {
     }
     paintMarks()
     paintArrows()
+    paintCheck()
     clearSelection()
   }
 
@@ -99,6 +101,7 @@ export function createBoard(root) {
   let selected = null
   let targets = []
   let moveHandler = null
+  let noTargetsHandler = null
   let targetProvider = (square) => {
     if (!currentFen) return []
     try {
@@ -126,6 +129,7 @@ export function createBoard(root) {
     const found = targetProvider(square)
     if (found.length === 0) {
       clearSelection()
+      if (noTargetsHandler) noTargetsHandler(square)
       return
     }
     selected = square
@@ -165,6 +169,7 @@ export function createBoard(root) {
   let overlay = null
   let marks = []
   let arrows = []
+  let checkSquare = null
 
   function ensureOverlay() {
     if (overlay && overlay.parentNode === root) return overlay
@@ -229,6 +234,13 @@ export function createBoard(root) {
     }
   }
 
+  // 체크를 당한 킹의 칸에 테두리를 두른다. null이면 지운다.
+  function paintCheck() {
+    for (const cell of squares.values()) cell.classList.remove('check')
+    const cell = checkSquare && squares.get(checkSquare)
+    if (cell) cell.classList.add('check')
+  }
+
   function setHighlights(list) {
     marks = Array.isArray(list) ? list : []
     paintMarks()
@@ -255,6 +267,14 @@ export function createBoard(root) {
     },
     setTargetProvider(fn) {
       targetProvider = fn
+    },
+    // 갈 칸이 없는 칸을 눌렀을 때 부른다. 레슨은 쓰지 않는다(말없이 지나간다).
+    onNoTargets(fn) {
+      noTargetsHandler = fn
+    },
+    setCheck(square) {
+      checkSquare = square || null
+      paintCheck()
     },
     clearSelection,
     setHighlights,

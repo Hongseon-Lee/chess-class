@@ -1,5 +1,8 @@
 import { createBoard } from './board.js'
-import { createLessonRunner } from './lesson-runner.js'
+import * as engine from './engine.js'
+import { createGameSession, restoreGameSession } from './game-session.js'
+import { createLessonRunner, START_FEN } from './lesson-runner.js'
+import { mountGame } from './play-view.js'
 import { createProgress, browserStorage } from './progress.js'
 
 const app = document.getElementById('app')
@@ -17,6 +20,42 @@ let inLesson = false
 
 // 새 배포가 준비됐는데 레슨 중이라 미뤄 둔 상태.
 let updatePending = false
+
+// 지금 화면에 떠 있는 대국. 다른 화면으로 갈 때 멈춰야 엔진이 떠난 화면에 수를 두지 않는다.
+let activeGame = null
+
+function closeActiveGame() {
+  if (activeGame) activeGame.destroy()
+  activeGame = null
+}
+
+// "엔진과 한 판"의 저장 자리. 레슨의 대결은 레슨 id를 자리로 쓴다.
+const FREE_GAME = 'free'
+
+const LEVELS = [
+  { depth: 1, name: '입문', label: '입문 (가장 쉬움)' },
+  { depth: 2, name: '초급', label: '초급' },
+  { depth: 3, name: '중급', label: '중급 (가장 어려움)' },
+]
+
+const COLORS = [
+  { color: 'w', name: '흰색', label: '흰색 · 먼저 둡니다' },
+  { color: 'b', name: '검은색', label: '검은색' },
+]
+
+// 이어서 둘 수 있는 "엔진과 한 판": 내가 한 수라도 두었고 아직 끝나지 않은 대국. 아니면 null.
+// (검은색으로 시작만 해서 엔진의 첫 수만 있거나, 무르기로 내 수가 다 없어진 판은 "두던 대국"이 아니다.)
+function playableFreeGame(profileId) {
+  const record = progress.getGame(profileId, FREE_GAME)
+  const session = record ? restoreGameSession(record) : null
+  return session && !session.outcome() && session.canUndo() ? session : null
+}
+
+function gameLabel(depth, color) {
+  const level = LEVELS.find((l) => l.depth === depth)
+  const side = COLORS.find((c) => c.color === color)
+  return `${level.name} · ${side.name}`
+}
 
 function el(tag, className, text) {
   const node = document.createElement(tag)
@@ -91,6 +130,7 @@ function showError(message, detail) {
 
 function showProfilePicker() {
   if (applyPendingUpdate()) return
+  closeActiveGame()
   inLesson = false
   app.replaceChildren()
   app.appendChild(el('h1', null, '누가 배우나요?'))
@@ -174,6 +214,7 @@ function showProfilePicker() {
 
 function showUnitList() {
   if (applyPendingUpdate()) return
+  closeActiveGame()
   inLesson = false
   const profileId = progress.getActiveProfile()
   app.replaceChildren()
@@ -188,6 +229,12 @@ function showUnitList() {
   app.appendChild(
     el('p', 'muted', '맥과 아이폰의 진도는 따로 저장됩니다. 기기를 옮길 때는 진도 내보내기를 쓰세요.')
   )
+
+  const play = button('', showPlaySetup, 'btn btn-play')
+  play.appendChild(el('div', null, '엔진과 한 판'))
+  play.appendChild(el('div', 'muted', '난이도를 골라 컴퓨터 상대(엔진)와 처음부터 끝까지 둡니다'))
+  if (playableFreeGame(profileId)) play.appendChild(el('div', 'muted', '두던 대국이 있습니다'))
+  app.appendChild(play)
 
   for (const unit of curriculum.units) {
     app.appendChild(el('h2', null, unit.title))
@@ -267,7 +314,116 @@ function applyPendingUpdate() {
   return true
 }
 
+function showPlaySetup() {
+  if (applyPendingUpdate()) return
+  closeActiveGame()
+  inLesson = false
+  const profileId = progress.getActiveProfile()
+  app.replaceChildren()
+
+  const header = el('div', 'row')
+  header.appendChild(button('← 목록', showUnitList, 'btn btn-quiet'))
+  header.appendChild(el('h1', 'play-label', '엔진과 한 판'))
+  app.appendChild(header)
+
+  const record = progress.getGame(profileId, FREE_GAME)
+  const saved = playableFreeGame(profileId)
+  if (record && !saved) {
+    // 끝났거나 내가 한 수도 두지 않은 대국은 "두던 대국"으로 보이지 않게 말없이 지운다(체크메이트·무승부는 그 화면에서
+    // 무를 수 있었지만, 나간 뒤에는 버린다). 되살릴 수 없는 기록이면 알린다.
+    const finished = restoreGameSession(record)
+    progress.clearGame(profileId, FREE_GAME)
+    if (!finished) app.appendChild(el('p', 'notice notice-warn', '저장된 대국을 이어갈 수 없어 새로 시작합니다.'))
+  }
+  if (saved) {
+    // 수는 레슨에서처럼 한 쪽이 한 번 두는 것이다. 양쪽이 둔 수를 모두 센다.
+    const label = `이어서 두기 — ${gameLabel(saved.depth, saved.userColor)} · 지금까지 ${saved.record().moves.length}수`
+    app.appendChild(button(label, () => showFreeGame(saved), 'btn btn-next'))
+  }
+
+  let depth = 1
+  let color = 'w'
+  function choices(title, options, isOn, pick) {
+    app.appendChild(el('h2', null, title))
+    const group = el('div', 'choices')
+    const buttons = options.map((option) => {
+      const b = button(option.label, () => {
+        pick(option)
+        paint()
+      }, 'btn btn-option')
+      group.appendChild(b)
+      return [b, option]
+    })
+    function paint() {
+      for (const [b, option] of buttons) {
+        b.classList.toggle('active', isOn(option))
+        b.setAttribute('aria-pressed', String(isOn(option)))
+      }
+    }
+    paint()
+    app.appendChild(group)
+  }
+  choices('상대', LEVELS, (l) => l.depth === depth, (l) => { depth = l.depth })
+  choices('내 색', COLORS, (c) => c.color === color, (c) => { color = c.color })
+
+  app.appendChild(button('시작', () => {
+    if (saved && !confirm('두던 대국은 사라집니다. 새로 시작할까요?')) return
+    progress.clearGame(profileId, FREE_GAME)
+    showFreeGame(createGameSession({ startFen: START_FEN, depth, userColor: color }))
+  }, 'btn btn-start'))
+}
+
+// 저장이 안 돼도 대국은 계속된다. 다만 앱을 닫으면 이어 둘 수 없다는 것을 조용히 알린다.
+function saveNotice() {
+  const note = el('p', 'muted small', '이 기기에 대국을 저장하지 못했습니다. 앱을 닫으면 이어서 둘 수 없습니다.')
+  note.hidden = true
+  return note
+}
+
+function showFreeGame(session) {
+  closeActiveGame()
+  inLesson = true
+  const profileId = progress.getActiveProfile()
+  app.replaceChildren()
+
+  const header = el('div', 'row')
+  header.appendChild(button('← 목록', showUnitList, 'btn btn-quiet'))
+  header.appendChild(el('div', 'play-label', gameLabel(session.depth, session.userColor)))
+  app.appendChild(header)
+  const host = el('div')
+  app.appendChild(host)
+  const note = saveNotice()
+  app.appendChild(note)
+
+  const save = (record) => {
+    note.hidden = progress.saveGame(profileId, FREE_GAME, record)
+  }
+  // 처음 그릴 때는 저장하지 않는다. 시작만 누르고 나간 판이 "두던 대국"으로 남지 않게 한다.
+  // 수가 놓일 때마다 onSave가 저장한다(검은색이면 엔진의 첫 수부터).
+  activeGame = mountGame(host, session, {
+    engine,
+    onSave: save,
+    endActions: [
+      {
+        label: '한 판 더',
+        onClick: () => {
+          progress.clearGame(profileId, FREE_GAME)
+          showFreeGame(createGameSession({ startFen: session.startFen, depth: session.depth, userColor: session.userColor }))
+        },
+      },
+      {
+        label: '목록으로',
+        onClick: () => {
+          progress.clearGame(profileId, FREE_GAME)
+          showUnitList()
+        },
+      },
+    ],
+  })
+}
+
 function showLesson(lessonId) {
+  closeActiveGame()
   const found = findLesson(lessonId)
   if (!found) {
     showError('레슨을 찾을 수 없습니다', lessonId)
@@ -303,6 +459,11 @@ function showLesson(lessonId) {
   const boardHost = el('div')
   app.appendChild(boardHost)
   const board = createBoard(boardHost)
+
+  // 대결 스텝의 대국 화면. 그 스텝에 들어올 때 한 번 띄우고, 떠날 때 멈춘다.
+  const gameHost = el('div')
+  app.appendChild(gameHost)
+  let sparOn = false
 
   const panel = el('div', 'panel')
   app.appendChild(panel)
@@ -356,6 +517,51 @@ function showLesson(lessonId) {
     }
   }
 
+  // 저장해 둔 대국이 이 스텝의 것이면 이어 두고, 아니면 새로 시작한다.
+  function startSpar(view) {
+    const record = progress.getGame(profileId, lessonId)
+    let session = record ? restoreGameSession(record) : null
+    if (session && (session.startFen !== view.fen || session.depth !== view.depth || session.userColor !== view.userColor)) {
+      session = null // 레슨 내용이 바뀌었다
+    }
+    if (record && !session) {
+      progress.clearGame(profileId, lessonId)
+      feedback.className = 'feedback bad'
+      feedback.textContent = '저장된 대국을 이어갈 수 없어 새로 시작합니다.'
+    }
+    if (!session) session = createGameSession({ startFen: view.fen, depth: view.depth, userColor: view.userColor })
+    if (session.reachedEnd()) runner.submitGameEnd()
+    const note = saveNotice()
+    const save = (rec) => {
+      note.hidden = progress.saveGame(profileId, lessonId, rec)
+      // "새로 시작합니다" 안내는 첫 수가 놓이면 거둔다.
+      if (rec.moves.length > 0 && feedback.textContent) {
+        feedback.textContent = ''
+        feedback.className = 'feedback'
+        feedback.hidden = true
+      }
+    }
+    save(session.record())
+    activeGame = mountGame(gameHost, session, {
+      engine,
+      intro: view.intro,
+      onSave: save,
+      onEnd: () => {
+        runner.submitGameEnd()
+        render()
+        revealAnswer() // 작은 아이폰에서는 끝났을 때 나오는 '다음'이 화면 아래에 있다
+      },
+    })
+    gameHost.appendChild(note)
+    sparOn = true
+  }
+
+  function stopSpar() {
+    closeActiveGame()
+    gameHost.replaceChildren()
+    sparOn = false
+  }
+
   function render() {
     if (runner.isComplete()) {
       finish()
@@ -365,13 +571,22 @@ function showLesson(lessonId) {
     const view = runner.current()
     counter.textContent = `${view.index + 1} / ${view.total}`
 
-    board.setPosition(view.fen, view.orientation)
-    board.setHighlights(view.highlight)
-    board.setArrows(view.arrows)
-    board.setInteractive(view.type === 'guided' && !runner.canAdvance())
-
     panel.replaceChildren()
     controls.replaceChildren()
+
+    // 대결 스텝에서는 대국 화면이 판과 글을 다 갖고 있다. 빈 칸이 아이폰 화면 아래로 단추를 밀지 않게 숨긴다.
+    boardHost.hidden = view.type === 'spar'
+    panel.hidden = view.type === 'spar'
+    if (view.type === 'spar') {
+      if (!sparOn) startSpar(view)
+      feedback.hidden = !feedback.textContent
+    } else {
+      feedback.hidden = false
+      board.setPosition(view.fen, view.orientation)
+      board.setHighlights(view.highlight)
+      board.setArrows(view.arrows)
+      board.setInteractive(view.type === 'guided' && !runner.canAdvance())
+    }
 
     if (view.type === 'explain') {
       panel.appendChild(el('p', null, view.text))
@@ -404,12 +619,20 @@ function showLesson(lessonId) {
         button('다음', () => {
           feedback.textContent = ''
           feedback.className = 'feedback'
+          if (sparOn) {
+            stopSpar()
+            progress.clearGame(profileId, lessonId)
+          }
           try {
             runner.next()
-            progress.setStepCursor(profileId, lessonId, runner.stepIndex())
           } catch (e) {
             showError('레슨을 이어갈 수 없습니다', `${found.lesson.title}: ${e.message}`)
             return
+          }
+          try {
+            progress.setStepCursor(profileId, lessonId, runner.stepIndex())
+          } catch (e) {
+            // 저장 공간이 모자라도 레슨은 이어 간다. 완료 화면이 저장하지 못했다고 따로 알린다.
           }
           render()
           window.scrollTo(0, 0)

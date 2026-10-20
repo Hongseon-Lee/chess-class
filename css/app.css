@@ -20,6 +20,10 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
+/* hidden 속성은 언제나 숨긴다. .board처럼 display를 정한 클래스가 브라우저 기본값을 이기지 못하게 한다
+   (대결 스텝에서 레슨용 판이 대국 판 위에 그대로 남던 것). */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
@@ -233,3 +237,53 @@ p { margin: 8px 0; }
 
 /* 답한 뒤 안내 문구와 '다음' 버튼을 화면 안으로 끌어올 때, 화면 끝에 딱 붙지 않게 한다. */
 .btn, .feedback { scroll-margin: 12px 0 20px; }
+
+/* 체크를 당한 킹의 칸. 노란 칸(엔진의 마지막 수) 위에서도 보이게 테두리로 그린다. */
+.sq.check { box-shadow: inset 0 0 0 4px var(--bad); }
+
+/* 대국 화면 */
+.play-label { flex: 1; }
+.play-status { font-weight: 500; margin: 10px 0 0; min-height: 1.7em; }
+.play-status-end { font-size: 18px; }
+.play-hint { margin: 0; }
+.play-hint:empty { display: none; }
+
+/* 엔진 수의 설명. 문장 길이가 달라도 아래 단추가 오르내리지 않게 세 줄 높이를 늘 잡아 둔다. */
+.explain-box {
+  min-height: calc(3 * 1.7em + 1.7em + 18px);
+  margin: 8px 0;
+  padding: 8px 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.explain-label { color: var(--muted); line-height: 1.7; }
+.explain-text { margin: 0; }
+
+.play-controls { margin: 8px 0; }
+.btn-play-control {
+  min-height: 44px;
+  padding: 10px 18px;
+  color: var(--fg);
+  border: 1px solid var(--line);
+}
+
+/* 레슨 목록 맨 위의 "엔진과 한 판" */
+.btn-play { border-color: var(--accent); margin-bottom: 8px; }
+.btn-play .muted { font-size: 14px; }
+
+/* 설정 화면에서 고른 것. 고르는 단추(테두리)와 시작 단추(채운 색)가 다르게 보여야 한다. */
+.btn-option.active { border-color: var(--accent); font-weight: 600; }
+.btn-start {
+  margin-top: 20px;
+  text-align: center;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 끝났을 때의 단추(한 판 더, 목록으로)는 한 줄에 나란히. 아이폰에서 화면 아래로 밀려나지 않게 한다. */
+.play-ends { display: flex; gap: 10px; }
+.play-ends:empty { display: none; }
+.play-ends .btn { flex: 1; margin: 0; text-align: center; }

@@ -6,8 +6,9 @@ export function resolveFen(fen) {
   return fen === 'startpos' ? START_FEN : fen
 }
 
+// 이 스텝은 무언가를 해내야 다음으로 넘어간다. 대결은 대국을 끝까지 가야 한다.
 function needsAnswer(step) {
-  return step.type === 'guided' || step.type === 'quiz'
+  return step.type === 'guided' || step.type === 'quiz' || step.type === 'spar'
 }
 
 export function createLessonRunner(lesson) {
@@ -51,6 +52,14 @@ export function createLessonRunner(lesson) {
     if (s.type === 'quiz') {
       view.question = s.question
       view.choices = s.choices.map((c) => ({ text: c.text }))
+    }
+    if (s.type === 'spar') {
+      // 대국은 play-view와 game-session이 맡는다. 여기서는 시작 조건만 알려 준다.
+      view.userColor = chess.turn()
+      view.orientation = s.orientation || (chess.turn() === 'w' ? 'white' : 'black')
+      view.depth = s.depth
+      view.goal = s.goal
+      view.intro = s.intro
     }
     return view
   }
@@ -108,6 +117,16 @@ export function createLessonRunner(lesson) {
     return { ok: !!choice.correct, why: choice.why }
   }
 
+  // 대결 스텝의 대국이 끝까지 갔다(체크메이트, 무승부, 기권 가운데 무엇이든). 지금 목표는
+  // 'finish' 하나다. 앱은 다시 열었을 때 그 대국이 한 번이라도 끝까지 갔으면 이것을 부른다.
+  function submitGameEnd() {
+    if (index >= lesson.steps.length) throw new Error('이미 끝난 레슨입니다')
+    const s = step()
+    if (s.type !== 'spar') throw new Error('spar 스텝이 아닙니다')
+    if (s.goal !== 'finish') throw new Error(`모르는 대결 목표입니다: ${s.goal}`)
+    satisfied = true
+  }
+
   function next() {
     if (!canAdvance()) return false
     if (index >= lesson.steps.length - 1) {
@@ -134,6 +153,7 @@ export function createLessonRunner(lesson) {
     legalTargets,
     submitMove,
     submitChoice,
+    submitGameEnd,
     canAdvance,
     next,
     goTo,

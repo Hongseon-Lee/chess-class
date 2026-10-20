@@ -9,7 +9,7 @@
 
 // 이 배포의 지문. 배포할 때 tools/sitefiles.py가 내보내는 파일들로 계산해 바꿔 넣는다.
 // 이 줄은 손으로 고치지 않는다. 'dev'인 채로는(개발 중인 사본) 아무것도 저장하지 않는다.
-const BUILD = '2026-10-17.cecf2dcf'
+const BUILD = '2026-10-20.5b28b5c1'
 
 const CACHE_PREFIX = 'chessclass-'
 const CACHE = CACHE_PREFIX + BUILD
@@ -40,7 +40,11 @@ const PRECACHE = [
   './index.html',
   './js/app.js',
   './js/board.js',
+  './js/engine.js',
+  './js/explain.js',
+  './js/game-session.js',
   './js/lesson-runner.js',
+  './js/play-view.js',
   './js/progress.js',
   './js/vendor/chess.js',
   './manifest.webmanifest',

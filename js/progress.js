@@ -18,6 +18,10 @@ function isValidProfile(p) {
   )
 }
 
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v)
+}
+
 function isValidState(v) {
   if (v === null || typeof v !== 'object') return false
   if (v.version !== 1) return false
@@ -53,10 +57,13 @@ export function browserStorage() {
 
 export function createProgress(storage) {
   let corrupted = null
+  // 마지막으로 읽거나 쓴 저장소의 글. 저장소가 이것과 다르면 다른 화면이 그사이 저장한 것이다.
+  let lastRaw = null
   let state = read()
 
   function read() {
     const raw = storage.getItem(KEY)
+    lastRaw = raw
     if (raw) {
       try {
         const parsed = JSON.parse(raw)
@@ -80,10 +87,34 @@ export function createProgress(storage) {
   }
 
   function write() {
-    storage.setItem(KEY, JSON.stringify(state))
+    const text = JSON.stringify(state)
+    storage.setItem(KEY, text)
+    lastRaw = text
+  }
+
+  // 같은 저장소를 쓰는 다른 화면(맥의 다른 탭)이 그사이 저장한 것을 읽어 온다. 이렇게 하지 않으면 먼저 연 화면이
+  // 저장할 때마다 처음 읽은 상태를 통째로 써서 다른 화면의 진도를 지운다(대국은 수마다 저장하므로 자주 일어난다).
+  // 저장소가 그대로면 아무것도 하지 않는다(저장 공간이 모자라 쓰지 못한 이 화면의 변경을 지키기 위해서다).
+  // 읽은 값이 망가졌으면 지금 것을 그대로 쓴다.
+  function refresh() {
+    let raw = null
+    try {
+      raw = storage.getItem(KEY)
+    } catch (e) {
+      return
+    }
+    if (!raw || raw === lastRaw) return
+    lastRaw = raw
+    try {
+      const parsed = JSON.parse(raw)
+      if (isValidState(parsed)) state = parsed
+    } catch (e) {
+      // 망가진 값은 무시한다
+    }
   }
 
   function profile(id) {
+    refresh()
     const p = state.profiles[id]
     if (!p) throw new Error(`없는 프로필입니다: ${id}`)
     return p
@@ -98,6 +129,7 @@ export function createProgress(storage) {
 
   return {
     addProfile(displayName) {
+      refresh()
       const id = nextId()
       state.profiles[id] = {
         displayName,
@@ -112,6 +144,7 @@ export function createProgress(storage) {
     },
 
     listProfiles() {
+      refresh()
       return Object.keys(state.profiles).map((id) => ({
         id,
         displayName: state.profiles[id].displayName,
@@ -130,6 +163,7 @@ export function createProgress(storage) {
     },
 
     getActiveProfile() {
+      refresh()
       return state.activeProfile
     },
 
@@ -182,6 +216,40 @@ export function createProgress(storage) {
       return s ? { ...s } : { attempted: 0, solved: 0 }
     },
 
+    // 자리(key)마다 끝나지 않은 대국 하나. key는 'free'(엔진과 한 판) 또는 레슨 id.
+    // games는 진도 검사(isValidProfile)에 들지 않는다. 모양이 이상하면 그 값만 무시한다.
+    // 저장 공간이 모자라도 대국은 계속되어야 하므로 실패하면 예외 대신 false를 돌려준다.
+    saveGame(id, key, record) {
+      const p = profile(id)
+      if (!isPlainObject(p.games)) p.games = {}
+      p.games[key] = record
+      try {
+        write()
+        return true
+      } catch (e) {
+        return false
+      }
+    },
+
+    // 저장한 그대로의 사본. 없거나 객체가 아니면 null. 수를 다시 둘 수 있는지는
+    // game-session.js의 restoreGameSession이 판단한다.
+    getGame(id, key) {
+      const games = profile(id).games
+      if (!isPlainObject(games) || !isPlainObject(games[key])) return null
+      return JSON.parse(JSON.stringify(games[key]))
+    },
+
+    clearGame(id, key) {
+      const p = profile(id)
+      if (!isPlainObject(p.games) || !Object.prototype.hasOwnProperty.call(p.games, key)) return
+      delete p.games[key]
+      try {
+        write()
+      } catch (e) {
+        // 지우지 못해도 다음에 이어 두기가 한 번 더 보일 뿐이다.
+      }
+    },
+
     getCorruptedRaw() {
       return corrupted
     },
@@ -196,6 +264,7 @@ export function createProgress(storage) {
     },
 
     exportJSON() {
+      refresh()
       return JSON.stringify(state, null, 2)
     },
 
