@@ -6,9 +6,9 @@ export function resolveFen(fen) {
   return fen === 'startpos' ? START_FEN : fen
 }
 
-// 이 스텝은 무언가를 해내야 다음으로 넘어간다. 대결은 대국을 끝까지 가야 한다.
+// 이 스텝은 무언가를 해내야 다음으로 넘어간다. 대결은 대국을 끝까지, 퍼즐은 문제를 모두 끝내야 한다.
 function needsAnswer(step) {
-  return step.type === 'guided' || step.type === 'quiz' || step.type === 'spar'
+  return step.type === 'guided' || step.type === 'quiz' || step.type === 'spar' || step.type === 'puzzle'
 }
 
 export function createLessonRunner(lesson) {
@@ -52,6 +52,12 @@ export function createLessonRunner(lesson) {
     if (s.type === 'quiz') {
       view.question = s.question
       view.choices = s.choices.map((c) => ({ text: c.text }))
+    }
+    if (s.type === 'puzzle') {
+      // 문제를 고르고 푸는 것은 앱(app.js, puzzle-view.js)이 맡는다. 여기서는 고르는 조건만 알려 준다.
+      view.theme = s.theme
+      view.count = s.count
+      view.ratingMax = s.ratingMax
     }
     if (s.type === 'spar') {
       // 대국은 play-view와 game-session이 맡는다. 여기서는 시작 조건만 알려 준다.
@@ -127,6 +133,13 @@ export function createLessonRunner(lesson) {
     satisfied = true
   }
 
+  // 퍼즐 스텝의 문제를 모두 끝냈다(풀었든 정답을 보았든).
+  function submitPuzzlesDone() {
+    if (index >= lesson.steps.length) throw new Error('이미 끝난 레슨입니다')
+    if (step().type !== 'puzzle') throw new Error('puzzle 스텝이 아닙니다')
+    satisfied = true
+  }
+
   function next() {
     if (!canAdvance()) return false
     if (index >= lesson.steps.length - 1) {
@@ -154,6 +167,7 @@ export function createLessonRunner(lesson) {
     submitMove,
     submitChoice,
     submitGameEnd,
+    submitPuzzlesDone,
     canAdvance,
     next,
     goTo,

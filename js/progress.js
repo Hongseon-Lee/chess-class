@@ -22,6 +22,12 @@ function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
 }
 
+// 프로필의 푼 퍼즐 목록. solvedPuzzles는 진도 검사에 들지 않는다. 모양이 이상하면 빈 것으로 본다.
+function solvedList(p, theme) {
+  const v = isPlainObject(p.solvedPuzzles) ? p.solvedPuzzles[theme] : null
+  return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []
+}
+
 function isValidState(v) {
   if (v === null || typeof v !== 'object') return false
   if (v.version !== 1) return false
@@ -247,6 +253,33 @@ export function createProgress(storage) {
         write()
       } catch (e) {
         // 지우지 못해도 다음에 이어 두기가 한 번 더 보일 뿐이다.
+      }
+    },
+
+    // 푼 퍼즐(정답을 보지 않고 외통을 만든 문제). theme은 'mateIn1' 또는 'mateIn2'.
+    // 저장 공간이 모자라도 퍼즐은 계속되어야 하므로 실패하면 예외 대신 false를 돌려준다.
+    // 저장하지 못하면 예외 대신 false. 다른 화면이 진도를 불러와 이 프로필이 없어진 때도 그렇다
+    // (퍼즐 화면은 푼 순간 이것을 부른다. 예외가 나면 그 화면이 멈춘다).
+    markPuzzleSolved(id, theme, puzzleId) {
+      try {
+        const p = profile(id)
+        const list = solvedList(p, theme)
+        if (list.includes(puzzleId)) return true
+        if (!isPlainObject(p.solvedPuzzles)) p.solvedPuzzles = {}
+        p.solvedPuzzles[theme] = list.concat([puzzleId])
+        write()
+        return true
+      } catch (e) {
+        return false
+      }
+    },
+
+    // 다른 화면이 진도를 불러와 이 프로필이 없어졌으면 빈 목록(퍼즐 화면의 단추가 예외로 멈추지 않게).
+    getSolvedPuzzles(id, theme) {
+      try {
+        return solvedList(profile(id), theme)
+      } catch (e) {
+        return []
       }
     },
 

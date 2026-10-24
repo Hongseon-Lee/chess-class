@@ -4,6 +4,8 @@ import { createGameSession, restoreGameSession } from './game-session.js'
 import { createLessonRunner, START_FEN } from './lesson-runner.js'
 import { mountGame } from './play-view.js'
 import { createProgress, browserStorage } from './progress.js'
+import { createPuzzleSession } from './puzzle-session.js'
+import { mountPuzzle } from './puzzle-view.js'
 
 const app = document.getElementById('app')
 const { storage, persistent } = browserStorage()
@@ -21,7 +23,7 @@ let inLesson = false
 // 새 배포가 준비됐는데 레슨 중이라 미뤄 둔 상태.
 let updatePending = false
 
-// 지금 화면에 떠 있는 대국. 다른 화면으로 갈 때 멈춰야 엔진이 떠난 화면에 수를 두지 않는다.
+// 지금 화면에 떠 있는 대국이나 퍼즐. 다른 화면으로 갈 때 멈춰야 떠난 화면에 수를 두지 않는다.
 let activeGame = null
 
 function closeActiveGame() {
@@ -42,6 +44,78 @@ const COLORS = [
   { color: 'w', name: '흰색', label: '흰색 · 먼저 둡니다' },
   { color: 'b', name: '검은색', label: '검은색' },
 ]
+
+// 외통 퍼즐의 문제. 앱을 열 때 읽기 시작한다. 읽는 동안은 puzzlesLoading이 그 약속이다.
+// 못 읽었으면 puzzles는 null: 카드는 다시 시도를 보이고, 레슨의 퍼즐 스텝은 건너뛴다.
+let puzzles = null
+let puzzlesLoading = null
+
+// 목록 화면 카드의 진도 줄. 퍼즐을 다 읽으면 이 줄만 고친다.
+let puzzleCardLine = null
+
+const PUZZLE_THEMES = [
+  { theme: 'mateIn1', name: '1수 외통' },
+  { theme: 'mateIn2', name: '2수 외통' },
+]
+
+async function readPuzzles() {
+  try {
+    const files = await Promise.all(PUZZLE_THEMES.map(async ({ theme }) => {
+      const response = await fetch(`./data/puzzles/${theme}.json`)
+      if (!response.ok) throw new Error('HTTP ' + response.status)
+      const data = await response.json()
+      if (!data || !Array.isArray(data.puzzles) || data.puzzles.length === 0) throw new Error('문제가 없습니다')
+      return [theme, data.puzzles]
+    }))
+    puzzles = Object.fromEntries(files)
+  } catch (e) {
+    puzzles = null
+  }
+}
+
+// 읽는 중이면 그 약속을, 아니면 새로 읽기 시작한 약속을 돌려준다. 실패를 던지지 않는다.
+function loadPuzzles() {
+  if (!puzzlesLoading) {
+    puzzlesLoading = readPuzzles().then(() => {
+      puzzlesLoading = null
+      paintPuzzleCard()
+    })
+  }
+  return puzzlesLoading
+}
+
+function puzzleCardText(profileId) {
+  if (puzzles) {
+    return PUZZLE_THEMES.map(({ theme, name }) => `${name} ${solvedCount(profileId, theme)} / ${puzzles[theme].length}`).join(' · ')
+  }
+  return puzzlesLoading ? '퍼즐을 불러오는 중입니다.' : '퍼즐을 불러오지 못했습니다. 다시 시도'
+}
+
+function paintPuzzleCard() {
+  if (puzzleCardLine && puzzleCardLine.isConnected) puzzleCardLine.textContent = puzzleCardText(progress.getActiveProfile())
+}
+
+function themeName(theme) {
+  return PUZZLE_THEMES.find((t) => t.theme === theme).name
+}
+
+// 지금 들어 있는 문제 가운데 푼 것의 수. 데이터가 바뀌어 없어진 문제는 세지 않는다.
+function solvedCount(profileId, theme) {
+  const solved = new Set(progress.getSolvedPuzzles(profileId, theme))
+  return puzzles[theme].filter((p) => solved.has(p.id)).length
+}
+
+// from 다음부터 파일 순서로 아직 못 푼 첫 문제의 차례. 끝까지 갔으면 처음부터 찾는다(from 자신은 맨 마지막).
+// 모두 풀었으면 null. from을 주지 않으면 처음부터.
+function nextUnsolved(profileId, theme, from = -1) {
+  const solved = new Set(progress.getSolvedPuzzles(profileId, theme))
+  const list = puzzles[theme]
+  for (let i = 1; i <= list.length; i++) {
+    const j = (from + i) % list.length
+    if (!solved.has(list[j].id)) return j
+  }
+  return null
+}
 
 // 이어서 둘 수 있는 "엔진과 한 판": 내가 한 수라도 두었고 아직 끝나지 않은 대국. 아니면 null.
 // (검은색으로 시작만 해서 엔진의 첫 수만 있거나, 무르기로 내 수가 다 없어진 판은 "두던 대국"이 아니다.)
@@ -236,6 +310,25 @@ function showUnitList() {
   if (playableFreeGame(profileId)) play.appendChild(el('div', 'muted', '두던 대국이 있습니다'))
   app.appendChild(play)
 
+  // 레슨 단추가 아니어서(btn-lesson이 아니다) 레슨 수를 세는 코드와 테스트가 그대로 맞는다.
+  const card = button('', () => {
+    if (puzzles) {
+      showPuzzleChooser()
+      return
+    }
+    // 다시 읽는다. 다 읽었을 때 아직 이 목록 화면이면 고르기 화면으로 간다. 그사이 다른 화면을 열었으면 그대로 둔다.
+    const here = app.firstElementChild
+    loadPuzzles().then(() => {
+      if (puzzles && app.firstElementChild === here) showPuzzleChooser()
+    })
+    paintPuzzleCard()
+  }, 'btn btn-play')
+  card.appendChild(el('div', null, '외통 퍼즐'))
+  card.appendChild(el('div', 'muted', '체크메이트를 만드는 수를 찾습니다'))
+  puzzleCardLine = el('div', 'muted', puzzleCardText(profileId))
+  card.appendChild(puzzleCardLine)
+  app.appendChild(card)
+
   for (const unit of curriculum.units) {
     app.appendChild(el('h2', null, unit.title))
     app.appendChild(el('p', 'muted', unit.subtitle))
@@ -422,6 +515,71 @@ function showFreeGame(session) {
   })
 }
 
+function showPuzzleChooser() {
+  if (applyPendingUpdate()) return
+  closeActiveGame()
+  inLesson = false
+  const profileId = progress.getActiveProfile()
+  app.replaceChildren()
+
+  const header = el('div', 'row')
+  header.appendChild(button('← 목록', showUnitList, 'btn btn-quiet'))
+  header.appendChild(el('h1', 'play-label', '외통 퍼즐'))
+  app.appendChild(header)
+
+  for (const { theme, name } of PUZZLE_THEMES) {
+    const total = puzzles[theme].length
+    const solved = solvedCount(profileId, theme)
+    const label = solved === total ? `${name} — 모두 풀었습니다` : `${name} — ${solved} / ${total} 풀었습니다`
+    app.appendChild(button(label, () => {
+      // 모두 풀었으면 처음 문제부터 다시 푼다.
+      const index = nextUnsolved(profileId, theme)
+      showPuzzle(theme, index === null ? 0 : index)
+    }, 'btn btn-next'))
+  }
+}
+
+// 카드의 문제 화면. 문제 하나의 풀이 상태는 저장하지 않는다. 나갔다 오면 그 문제를 처음부터 푼다.
+function showPuzzle(theme, index) {
+  closeActiveGame()
+  inLesson = true
+  const profileId = progress.getActiveProfile()
+  const list = puzzles[theme]
+  const puzzle = list[index]
+  app.replaceChildren()
+
+  const header = el('div', 'row')
+  header.appendChild(button('← 목록', showUnitList, 'btn btn-quiet'))
+  header.appendChild(el('div', 'play-label', `${themeName(theme)} · ${index + 1} / ${list.length}`))
+  app.appendChild(header)
+  const host = el('div')
+  app.appendChild(host)
+  const note = el('p', 'muted small', '이 기기에 푼 문제를 저장하지 못했습니다.')
+  note.hidden = true
+  app.appendChild(note)
+
+  activeGame = mountPuzzle(host, createPuzzleSession(puzzle, theme), {
+    onSolved: () => {
+      note.hidden = progress.markPuzzleSolved(profileId, theme, puzzle.id)
+      // 안내는 끝 단추보다 아래에 있다. 작은 아이폰에서도 보이게 내린다.
+      if (!note.hidden && note.scrollIntoView) note.scrollIntoView({ block: 'nearest' })
+    },
+    actions: [
+      {
+        label: '다음 문제',
+        onClick: () => {
+          const next = nextUnsolved(profileId, theme, index)
+          // 모두 풀었으면(처음부터 다시 푸는 중이면) 차례대로 다음 문제, 마지막 문제 뒤에는 고르기 화면.
+          if (next !== null) showPuzzle(theme, next)
+          else if (index + 1 < list.length) showPuzzle(theme, index + 1)
+          else showPuzzleChooser()
+        },
+      },
+      { label: '목록으로', onClick: showUnitList },
+    ],
+  })
+}
+
 function showLesson(lessonId) {
   closeActiveGame()
   const found = findLesson(lessonId)
@@ -464,6 +622,11 @@ function showLesson(lessonId) {
   const gameHost = el('div')
   app.appendChild(gameHost)
   let sparOn = false
+
+  // 퍼즐 스텝의 문제 화면. 그 스텝에 들어올 때 첫 문제부터 띄우고, 떠날 때 멈춘다.
+  const puzzleHost = el('div')
+  app.appendChild(puzzleHost)
+  let puzzleOn = false
 
   const panel = el('div', 'panel')
   app.appendChild(panel)
@@ -562,6 +725,62 @@ function showLesson(lessonId) {
     sparOn = false
   }
 
+  // 그 스텝의 문제는 언제나 같다: 그 테마의 파일에서 레이팅이 ratingMax 이하인 문제를 파일 순서로 count개.
+  // 마지막 문제를 끝내면(풀었든 정답을 보았든) 레슨의 '다음'이 나온다. 레슨에서 푼 문제도 카드의 진도에 들어간다.
+  function startPuzzles(view) {
+    puzzleOn = true
+    if (!puzzles && puzzlesLoading) {
+      // 앱을 열 때 읽기 시작한 퍼즐이 아직 오는 중이다. 다 오면, 아직 이 스텝에 있으면 다시 그린다.
+      const step = runner.stepIndex()
+      puzzleHost.replaceChildren(el('p', 'muted small', '퍼즐을 불러오는 중입니다.'))
+      puzzlesLoading.then(() => {
+        if (!puzzleOn || runner.stepIndex() !== step || !puzzleHost.isConnected) return
+        puzzleOn = false
+        puzzleHost.replaceChildren()
+        render()
+      })
+      return
+    }
+    const list = puzzles ? puzzles[view.theme].filter((p) => p.rating <= view.ratingMax).slice(0, view.count) : []
+    if (list.length === 0) {
+      feedback.className = 'feedback bad'
+      feedback.textContent = '퍼즐을 불러오지 못해 이 스텝을 건너뜁니다.'
+      runner.submitPuzzlesDone()
+      return
+    }
+    const show = (i) => {
+      closeActiveGame()
+      puzzleHost.replaceChildren()
+      puzzleHost.appendChild(el('p', 'muted small puzzle-count', `문제 ${i + 1} / ${list.length}`))
+      const host = el('div')
+      puzzleHost.appendChild(host)
+      const last = i === list.length - 1
+      activeGame = mountPuzzle(host, createPuzzleSession(list[i], view.theme), {
+        onSolved: () => progress.markPuzzleSolved(profileId, view.theme, list[i].id),
+        onFinished: () => {
+          if (!last) return
+          runner.submitPuzzlesDone()
+          render()
+          revealAnswer() // 작은 아이폰에서는 끝났을 때 나오는 '다음'이 화면 아래에 있다
+        },
+        actions: last ? [] : [{
+          label: '다음 문제',
+          onClick: () => {
+            show(i + 1)
+            window.scrollTo(0, 0)
+          },
+        }],
+      })
+    }
+    show(0)
+  }
+
+  function stopPuzzles() {
+    closeActiveGame()
+    puzzleHost.replaceChildren()
+    puzzleOn = false
+  }
+
   function render() {
     if (runner.isComplete()) {
       finish()
@@ -574,11 +793,15 @@ function showLesson(lessonId) {
     panel.replaceChildren()
     controls.replaceChildren()
 
-    // 대결 스텝에서는 대국 화면이 판과 글을 다 갖고 있다. 빈 칸이 아이폰 화면 아래로 단추를 밀지 않게 숨긴다.
-    boardHost.hidden = view.type === 'spar'
-    panel.hidden = view.type === 'spar'
+    // 대결과 퍼즐 스텝에서는 대국·퍼즐 화면이 판과 글을 다 갖고 있다. 빈 칸이 아이폰 화면 아래로 단추를 밀지 않게 숨긴다.
+    const ownScreen = view.type === 'spar' || view.type === 'puzzle'
+    boardHost.hidden = ownScreen
+    panel.hidden = ownScreen
     if (view.type === 'spar') {
       if (!sparOn) startSpar(view)
+      feedback.hidden = !feedback.textContent
+    } else if (view.type === 'puzzle') {
+      if (!puzzleOn) startPuzzles(view)
       feedback.hidden = !feedback.textContent
     } else {
       feedback.hidden = false
@@ -623,6 +846,7 @@ function showLesson(lessonId) {
             stopSpar()
             progress.clearGame(profileId, lessonId)
           }
+          if (puzzleOn) stopPuzzles()
           try {
             runner.next()
           } catch (e) {
@@ -645,6 +869,9 @@ function showLesson(lessonId) {
 }
 
 async function start() {
+  // 퍼즐은 레슨과 함께 읽기 시작하지만 첫 화면은 기다리지 않는다. 카드는 다 올 때까지 "불러오는 중"을 보이다가
+  // 그 자리에서 바뀐다. 기다리면 느린 첫 방문에서 index.html의 10초 안전망이 멀쩡한 화면을 다시 불러온다.
+  loadPuzzles()
   try {
     const response = await fetch('./data/curriculum.json')
     if (!response.ok) throw new Error('HTTP ' + response.status)

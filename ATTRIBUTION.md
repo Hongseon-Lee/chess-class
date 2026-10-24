@@ -49,4 +49,5 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 - 출처: https://database.lichess.org/
 - 라이선스: CC0 (표시 의무 없음. 예의상 기록한다)
-- 위치: `data/puzzles/` — 후속 계획에서 추가된다
+- 위치: `data/puzzles/mateIn1.json`, `data/puzzles/mateIn2.json` — 2026-10-02 판에서 `tools/build_puzzles.py`로
+  1수 외통 300문제, 2수 외통 200문제를 골랐다. 문제의 판과 수순, 레이팅, id는 고치지 않았다.
