@@ -2,6 +2,7 @@ import { createBoard } from './board.js'
 import * as engine from './engine.js'
 import { createGameSession, restoreGameSession } from './game-session.js'
 import { createLessonRunner, START_FEN } from './lesson-runner.js'
+import { winMaterialMet } from './material.js'
 import { mountGame } from './play-view.js'
 import { createProgress, browserStorage } from './progress.js'
 import { createPuzzleSession } from './puzzle-session.js'
@@ -622,6 +623,10 @@ function showLesson(lessonId) {
   const gameHost = el('div')
   app.appendChild(gameHost)
   let sparOn = false
+  // 목표가 기물 점수(win-material)인 대결이 목표를 이루기 전에 끝났다. '다시 두기'와 '건너뛰기'를 보인다.
+  let sparFailed = false
+  // 안내 칸의 "새로 시작합니다"는 첫 수가 놓이면 거둔다(목표를 이뤘다는 안내는 남긴다).
+  let restartNote = false
 
   // 퍼즐 스텝의 문제 화면. 그 스텝에 들어올 때 첫 문제부터 띄우고, 떠날 때 멈춘다.
   const puzzleHost = el('div')
@@ -654,6 +659,13 @@ function showLesson(lessonId) {
 
   board.setTargetProvider((square) => runner.legalTargets(square))
 
+  function clearFeedback() {
+    feedback.textContent = ''
+    feedback.className = 'feedback'
+    feedback.hidden = true
+    restartNote = false
+  }
+
   function finish() {
     let saveError = null
     try {
@@ -680,6 +692,27 @@ function showLesson(lessonId) {
     }
   }
 
+  // 기물 점수 목표를 이뤘다. 레슨의 '다음'이 나온다. reason: 'mate', 'material', 또는 null(까닭 없이).
+  // 까닭은 이룬 그 순간의 판에 대한 말이라서 그때만 말한다. over: 대국이 끝났다(그러면 이어 두라고 하지 않는다).
+  function showGoalMet(reason, lead, over) {
+    runner.submitGoalMet()
+    sparFailed = false
+    restartNote = false
+    feedback.className = 'feedback good'
+    if (reason === 'mate') feedback.textContent = '목표를 이뤘습니다. 체크메이트로 이겼습니다.'
+    else if (reason === 'material') feedback.textContent = `목표를 이뤘습니다. 엔진이 둔 뒤에도 기물 점수로 ${lead}점 이상 앞섰습니다.`
+    else if (over) feedback.textContent = '목표를 이뤘습니다. 다음으로 넘어가도 됩니다.'
+    else feedback.textContent = '목표를 이뤘습니다. 이어 두어도 되고, 다음으로 넘어가도 됩니다.'
+  }
+
+  // 기물 점수 목표를 이루기 전에 대국이 끝났다. '다시 두기'와 '건너뛰기'를 보인다(무르면 거둔다).
+  function showGoalMissed() {
+    sparFailed = true
+    restartNote = false
+    feedback.className = 'feedback bad'
+    feedback.textContent = '목표를 이루지 못했습니다. 다시 두거나 건너뛸 수 있습니다.'
+  }
+
   // 저장해 둔 대국이 이 스텝의 것이면 이어 두고, 아니면 새로 시작한다.
   function startSpar(view) {
     const record = progress.getGame(profileId, lessonId)
@@ -691,28 +724,57 @@ function showLesson(lessonId) {
       progress.clearGame(profileId, lessonId)
       feedback.className = 'feedback bad'
       feedback.textContent = '저장된 대국을 이어갈 수 없어 새로 시작합니다.'
+      restartNote = true
     }
     if (!session) session = createGameSession({ startFen: view.fen, depth: view.depth, userColor: view.userColor })
-    if (session.reachedEnd()) runner.submitGameEnd()
+    const materialGoal = view.goal === 'win-material'
+    if (!materialGoal) {
+      if (session.reachedEnd()) runner.submitGameEnd()
+    } else if (session.outcome() && !session.goalMet()) {
+      showGoalMissed()
+    }
+    // 목표를 이룬 대국의 안내는 save()가 쓴다(아래에서 곧바로 한 번 부른다).
     const note = saveNotice()
     const save = (rec) => {
       note.hidden = progress.saveGame(profileId, lessonId, rec)
-      // "새로 시작합니다" 안내는 첫 수가 놓이면 거둔다.
-      if (rec.moves.length > 0 && feedback.textContent) {
-        feedback.textContent = ''
-        feedback.className = 'feedback'
-        feedback.hidden = true
+      if (restartNote && rec.moves.length > 0) clearFeedback()
+      // 목표를 이룬 대국이다(다시 열었거나, 이룬 뒤 판이 바뀌었다: 수, 무르기, 기권). 까닭 없는 안내를 쓰고,
+      // 대국이 끝났으면 이어 두라고 하지 않는다. 이룬 순간의 까닭은 judge가 이 뒤에 쓴다.
+      if (session.goalMet()) showGoalMet(null, view.lead, session.outcome() !== null)
+      // 목표를 이루지 못하고 끝난 대국을 무르면 다시 이어 둔다. 안내와 두 단추를 거둔다.
+      if (sparFailed && !session.outcome()) {
+        sparFailed = false
+        clearFeedback()
+        render()
       }
+    }
+    // 판정은 엔진의 수가 놓인 뒤와 대국이 끝났을 때만 한다(material.js, 설계 §4).
+    const judge = (engineJustMoved) => {
+      if (!materialGoal || session.goalMet()) return
+      if (!winMaterialMet(session.game, session.userColor, view.lead, engineJustMoved)) return
+      session.markGoalMet()
+      save(session.record())
+      const outcome = session.outcome()
+      showGoalMet(outcome && outcome.kind === 'checkmate' ? 'mate' : 'material', view.lead)
+      render()
+      revealAnswer() // 작은 아이폰에서는 '다음'이 화면 아래에 있다
     }
     save(session.record())
     activeGame = mountGame(gameHost, session, {
       engine,
       intro: view.intro,
+      showMaterial: materialGoal,
       onSave: save,
+      onEngineMove: () => judge(true),
       onEnd: () => {
-        runner.submitGameEnd()
+        if (!materialGoal) {
+          runner.submitGameEnd()
+        } else {
+          judge(false)
+          if (!session.goalMet()) showGoalMissed()
+        }
         render()
-        revealAnswer() // 작은 아이폰에서는 끝났을 때 나오는 '다음'이 화면 아래에 있다
+        revealAnswer() // 작은 아이폰에서는 끝났을 때 나오는 단추가 화면 아래에 있다
       },
     })
     gameHost.appendChild(note)
@@ -797,8 +859,12 @@ function showLesson(lessonId) {
     const ownScreen = view.type === 'spar' || view.type === 'puzzle'
     boardHost.hidden = ownScreen
     panel.hidden = ownScreen
+    let sparStarted = false
     if (view.type === 'spar') {
-      if (!sparOn) startSpar(view)
+      if (!sparOn) {
+        startSpar(view)
+        sparStarted = true
+      }
       feedback.hidden = !feedback.textContent
     } else if (view.type === 'puzzle') {
       if (!puzzleOn) startPuzzles(view)
@@ -838,31 +904,53 @@ function showLesson(lessonId) {
     }
 
     if (runner.canAdvance()) {
-      controls.appendChild(
-        button('다음', () => {
-          feedback.textContent = ''
-          feedback.className = 'feedback'
-          if (sparOn) {
-            stopSpar()
-            progress.clearGame(profileId, lessonId)
-          }
-          if (puzzleOn) stopPuzzles()
-          try {
-            runner.next()
-          } catch (e) {
-            showError('레슨을 이어갈 수 없습니다', `${found.lesson.title}: ${e.message}`)
-            return
-          }
-          try {
-            progress.setStepCursor(profileId, lessonId, runner.stepIndex())
-          } catch (e) {
-            // 저장 공간이 모자라도 레슨은 이어 간다. 완료 화면이 저장하지 못했다고 따로 알린다.
-          }
-          render()
-          window.scrollTo(0, 0)
-        })
-      )
+      controls.appendChild(button('다음', advance))
+    } else if (view.type === 'spar' && sparFailed) {
+      controls.appendChild(button('다시 두기', () => {
+        stopSpar()
+        progress.clearGame(profileId, lessonId)
+        sparFailed = false
+        clearFeedback()
+        window.scrollTo(0, 0)
+        render()
+      }))
+      controls.appendChild(button('건너뛰기', () => {
+        runner.skipSpar()
+        advance()
+      }, 'btn btn-quiet'))
     }
+
+    // 대결 화면은 판 아래가 길다. 처음 띄울 때(다시 열 때 포함) 레슨의 단추나 무르기·기권 줄이 화면 안에 오게 내린다.
+    if (sparStarted) {
+      const target = controls.lastElementChild || gameHost.querySelector('.play-controls')
+      if (target && target.scrollIntoView) target.scrollIntoView({ block: 'nearest' })
+    }
+  }
+
+  function advance() {
+    feedback.textContent = ''
+    feedback.className = 'feedback'
+    sparFailed = false
+    restartNote = false
+    if (sparOn) {
+      stopSpar()
+      progress.clearGame(profileId, lessonId)
+    }
+    if (puzzleOn) stopPuzzles()
+    try {
+      runner.next()
+    } catch (e) {
+      showError('레슨을 이어갈 수 없습니다', `${found.lesson.title}: ${e.message}`)
+      return
+    }
+    try {
+      progress.setStepCursor(profileId, lessonId, runner.stepIndex())
+    } catch (e) {
+      // 저장 공간이 모자라도 레슨은 이어 간다. 완료 화면이 저장하지 못했다고 따로 알린다.
+    }
+    // 맨 위로 돌아간 뒤 그린다. 대결 스텝은 그리면서 단추 줄이 보이게 내린다.
+    window.scrollTo(0, 0)
+    render()
   }
 
   render()

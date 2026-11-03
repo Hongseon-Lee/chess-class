@@ -28,7 +28,7 @@ function judge(chess, resigned, userColor) {
 }
 
 // moves: 지금까지 둔 수(UCI). 둘 수 없는 수가 있거나 끝난 대국에 수가 더 있으면 예외.
-export function createGameSession({ startFen, depth, userColor, moves = [], resigned = false, reachedEnd = false }) {
+export function createGameSession({ startFen, depth, userColor, moves = [], resigned = false, reachedEnd = false, goalMet = false }) {
   if (![1, 2, 3].includes(depth)) throw new Error(`깊이는 1, 2, 3 가운데 하나여야 합니다: ${depth}`)
   if (userColor !== 'w' && userColor !== 'b') throw new Error(`내 색은 'w' 또는 'b'여야 합니다: ${userColor}`)
   const chess = new Chess(startFen)
@@ -43,6 +43,7 @@ export function createGameSession({ startFen, depth, userColor, moves = [], resi
   }
   if (resigned && judge(chess, false, userColor)) throw new Error('끝난 대국을 기권할 수는 없습니다')
   let ended = reachedEnd || judge(chess, resigned, userColor) !== null
+  let goal = goalMet
   let version = 0
   const engineColor = other(userColor)
 
@@ -141,6 +142,16 @@ export function createGameSession({ startFen, depth, userColor, moves = [], resi
       return ended
     },
 
+    // 레슨 대결의 목표(02단원의 기물 점수로 앞서기)를 이뤘는가. 판정은 앱이 하고 여기에는 남기기만 한다.
+    // 한 번 참이 되면 무른 뒤에도, 다시 연 뒤에도 참이다.
+    goalMet() {
+      return goal
+    },
+
+    markGoalMet() {
+      goal = true
+    },
+
     record() {
       return {
         v: 1,
@@ -150,6 +161,7 @@ export function createGameSession({ startFen, depth, userColor, moves = [], resi
         moves: uciMoves(),
         resigned,
         reachedEnd: ended,
+        goalMet: goal,
       }
     },
   }
@@ -166,7 +178,8 @@ function isRecord(r) {
     Array.isArray(r.moves) &&
     r.moves.every((m) => typeof m === 'string' && /^[a-h][1-8][a-h][1-8]q?$/.test(m)) &&
     typeof r.resigned === 'boolean' &&
-    typeof r.reachedEnd === 'boolean'
+    typeof r.reachedEnd === 'boolean' &&
+    (r.goalMet === undefined || typeof r.goalMet === 'boolean')
   )
 }
 

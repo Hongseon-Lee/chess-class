@@ -6,6 +6,7 @@
 // 엔진이 생각하는 사이에 무르기·기권·나가기가 있었으면(session.version()이 바뀌었으면) 그 결과를 버린다.
 import { createBoard } from './board.js'
 import { explainMove, endTitle, STATIC_TEXTS } from './explain.js'
+import { materialOf, leadText } from './material.js'
 
 export const ENGINE_DELAY_MS = 700
 export const REOPEN_MS = 250
@@ -31,10 +32,12 @@ function el(tag, className, text) {
 //   intro      엔진의 수가 아직 없을 때 설명 상자에 보일 글(없어도 된다).
 //   onSave     (record) => void. 수를 두거나 무르거나 기권할 때마다 부른다.
 //   onEnd      (outcome) => void. 대국이 끝나는 순간마다 부른다(무른 뒤 다시 끝나면 또 부른다).
+//   onEngineMove () => void. 엔진의 수가 놓이고 저장한 직후마다 부른다(그 수로 대국이 끝나면 onEnd보다 먼저).
+//   showMaterial 참이면 상태 줄 밑에 기물 점수 줄을 둔다(02단원 대결).
 //   endActions [{label, onClick}]. 끝났을 때 보일 단추.
 //   clock, confirm  테스트용으로 바꿔 끼운다.
 export function mountGame(container, session, options) {
-  const { engine, intro = '', onSave = () => {}, onEnd = () => {}, endActions = [] } = options
+  const { engine, intro = '', onSave = () => {}, onEnd = () => {}, onEngineMove = () => {}, endActions = [], showMaterial = false } = options
   const clock = options.clock || realClock
   const ask = options.confirm || ((text) => window.confirm(text))
   const game = session.game
@@ -42,6 +45,7 @@ export function mountGame(container, session, options) {
 
   const boardHost = el('div')
   const status = el('p', 'play-status')
+  const material = showMaterial ? el('p', 'muted small play-material') : null
   const hint = el('p', 'muted small play-hint')
   const box = el('div', 'explain-box')
   const label = el('div', 'explain-label small', STATIC_TEXTS.engineMoveLabel)
@@ -52,7 +56,7 @@ export function mountGame(container, session, options) {
   const resignButton = el('button', 'btn btn-quiet btn-play-control', '기권')
   controls.append(undoButton, resignButton)
   const ends = el('div', 'play-ends')
-  container.append(boardHost, status, hint, box, controls, ends)
+  container.append(...[boardHost, status, material, hint, box, controls, ends].filter(Boolean))
 
   const board = createBoard(boardHost)
   const orientation = userColor === 'w' ? 'white' : 'black'
@@ -119,6 +123,11 @@ export function mountGame(container, session, options) {
 
     paintStatus()
 
+    if (material) {
+      const sum = materialOf(game)
+      material.textContent = leadText(sum[userColor], sum[session.engineColor])
+    }
+
     hint.textContent = state === 'over' && session.canUndo() ? STATIC_TEXTS.undoHint : ''
 
     // 설명 상자: 끝났으면 왜 끝났는지(기권이면 비운다), 아니면 엔진의 마지막 수, 그것도 없으면 안내.
@@ -178,6 +187,7 @@ export function mountGame(container, session, options) {
         }
         session.applyEngineMove(result)
         save()
+        onEngineMove()
         if (session.outcome()) {
           finish()
           return
