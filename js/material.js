@@ -1,4 +1,5 @@
 // 기물 점수(02단원). 판 위 기물의 점수를 세고, 대결 화면의 점수 줄과 대결 목표 win-material을 판정한다.
+// 대결 목표 checkmate(04단원)의 판정도 여기 둔다(목표 판정은 한곳에서 한다).
 // 화면은 모른다. 점수 줄 문장을 explain.js에 두지 않는 까닭: 엔진 수의 설명에는 '점' 같은 말을 쓰지 않는다는
 // 검사가 걸려 있다(01단원만 배운 사람도 보는 문장이다).
 
@@ -21,6 +22,12 @@ export function leadText(mine, theirs) {
   if (mine > theirs) return `${head}${mine - theirs}점 앞섭니다`
   if (mine === theirs) return `${head}같습니다`
   return `${head}엔진이 ${theirs - mine}점 앞섭니다`
+}
+
+// 대결 목표 checkmate(04단원 설계 §4). 내 수로 체크메이트했으면 이룬다. 그 밖에 대국이 끝났으면(스테일메이트,
+// 50수, 세 번 되풀이, 기물 부족, 엔진의 체크메이트) 이루지 못한다.
+export function checkmateMet(chess, userColor) {
+  return chess.isCheckmate() && chess.turn() !== userColor
 }
 
 // 대결 목표 win-material(설계 §4). 엔진의 수가 막 놓였을 때(engineJustMoved)와 대국이 끝났을 때 부른다.

@@ -1,8 +1,9 @@
 import { createBoard } from './board.js'
 import * as engine from './engine.js'
 import { createGameSession, restoreGameSession } from './game-session.js'
+import { loadKpk } from './kpk.js'
 import { createLessonRunner, START_FEN } from './lesson-runner.js'
-import { winMaterialMet } from './material.js'
+import { checkmateMet, winMaterialMet } from './material.js'
 import { mountGame } from './play-view.js'
 import { createProgress, browserStorage } from './progress.js'
 import { createPuzzleSession } from './puzzle-session.js'
@@ -83,6 +84,15 @@ function loadPuzzles() {
     })
   }
   return puzzlesLoading
+}
+
+// 킹+폰 대 킹 표(04단원 설계 §4). 엔진이 그 끝내기에서 무승부를 지키는 데 쓴다. 받지 못하면 엔진은 원래대로 두고
+// 앱은 그대로 돈다(그 대결이 쉬워질 뿐이다). 실패를 던지지 않는다.
+function loadKpkTable() {
+  return fetch('./data/kpk.bin')
+    .then((response) => (response.ok ? response.arrayBuffer() : null))
+    .then((buffer) => { if (buffer) loadKpk(buffer) })
+    .catch(() => {})
 }
 
 function puzzleCardText(profileId) {
@@ -623,7 +633,7 @@ function showLesson(lessonId) {
   const gameHost = el('div')
   app.appendChild(gameHost)
   let sparOn = false
-  // 목표가 기물 점수(win-material)인 대결이 목표를 이루기 전에 끝났다. '다시 두기'와 '건너뛰기'를 보인다.
+  // 목표가 있는 대결(win-material, checkmate)이 목표를 이루기 전에 끝났다. '다시 두기'와 '건너뛰기'를 보인다.
   let sparFailed = false
   // 안내 칸의 "새로 시작합니다"는 첫 수가 놓이면 거둔다(목표를 이뤘다는 안내는 남긴다).
   let restartNote = false
@@ -692,7 +702,7 @@ function showLesson(lessonId) {
     }
   }
 
-  // 기물 점수 목표를 이뤘다. 레슨의 '다음'이 나온다. reason: 'mate', 'material', 또는 null(까닭 없이).
+  // 대결의 목표를 이뤘다. 레슨의 '다음'이 나온다. reason: 'mate', 'material', 또는 null(까닭 없이).
   // 까닭은 이룬 그 순간의 판에 대한 말이라서 그때만 말한다. over: 대국이 끝났다(그러면 이어 두라고 하지 않는다).
   function showGoalMet(reason, lead, over) {
     runner.submitGoalMet()
@@ -705,7 +715,7 @@ function showLesson(lessonId) {
     else feedback.textContent = '목표를 이뤘습니다. 이어 두어도 되고, 다음으로 넘어가도 됩니다.'
   }
 
-  // 기물 점수 목표를 이루기 전에 대국이 끝났다. '다시 두기'와 '건너뛰기'를 보인다(무르면 거둔다).
+  // 목표를 이루기 전에 대국이 끝났다. '다시 두기'와 '건너뛰기'를 보인다(무르면 거둔다).
   function showGoalMissed() {
     sparFailed = true
     restartNote = false
@@ -727,8 +737,9 @@ function showLesson(lessonId) {
       restartNote = true
     }
     if (!session) session = createGameSession({ startFen: view.fen, depth: view.depth, userColor: view.userColor })
-    const materialGoal = view.goal === 'win-material'
-    if (!materialGoal) {
+    // 목표가 있는 대결: 기물 점수(win-material, 02단원)와 체크메이트(checkmate, 04단원). 점수 줄은 기물 점수 목표에만 있다.
+    const goalSpar = view.goal === 'win-material' || view.goal === 'checkmate'
+    if (!goalSpar) {
       if (session.reachedEnd()) runner.submitGameEnd()
     } else if (session.outcome() && !session.goalMet()) {
       showGoalMissed()
@@ -748,10 +759,13 @@ function showLesson(lessonId) {
         render()
       }
     }
-    // 판정은 엔진의 수가 놓인 뒤와 대국이 끝났을 때만 한다(material.js, 설계 §4).
+    // 판정은 엔진의 수가 놓인 뒤와 대국이 끝났을 때만 한다(material.js, 02단원 설계 §4, 04단원 설계 §4).
     const judge = (engineJustMoved) => {
-      if (!materialGoal || session.goalMet()) return
-      if (!winMaterialMet(session.game, session.userColor, view.lead, engineJustMoved)) return
+      if (!goalSpar || session.goalMet()) return
+      const met = view.goal === 'checkmate'
+        ? checkmateMet(session.game, session.userColor)
+        : winMaterialMet(session.game, session.userColor, view.lead, engineJustMoved)
+      if (!met) return
       session.markGoalMet()
       save(session.record())
       const outcome = session.outcome()
@@ -763,11 +777,11 @@ function showLesson(lessonId) {
     activeGame = mountGame(gameHost, session, {
       engine,
       intro: view.intro,
-      showMaterial: materialGoal,
+      showMaterial: view.goal === 'win-material',
       onSave: save,
       onEngineMove: () => judge(true),
       onEnd: () => {
-        if (!materialGoal) {
+        if (!goalSpar) {
           runner.submitGameEnd()
         } else {
           judge(false)
@@ -960,6 +974,7 @@ async function start() {
   // 퍼즐은 레슨과 함께 읽기 시작하지만 첫 화면은 기다리지 않는다. 카드는 다 올 때까지 "불러오는 중"을 보이다가
   // 그 자리에서 바뀐다. 기다리면 느린 첫 방문에서 index.html의 10초 안전망이 멀쩡한 화면을 다시 불러온다.
   loadPuzzles()
+  loadKpkTable()
   try {
     const response = await fetch('./data/curriculum.json')
     if (!response.ok) throw new Error('HTTP ' + response.status)

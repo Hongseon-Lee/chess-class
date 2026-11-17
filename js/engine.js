@@ -6,7 +6,11 @@
 // chess.js를 바꾸면 tests의 coreSelfCheck와 tools/test_play.py --full로 다시 확인한다.
 //
 // 이 파일은 글을 쓰지 않는다. 엔진이 둔 수를 설명하는 문장은 explain.js가 만든다.
+//
+// 하나의 예외: 킹+폰 대 킹에서 엔진이 킹만 남은 쪽이면, 표(kpk.js)를 보고 무승부를 지키는 수를 둔다(04단원 설계 §4).
+// 깊이만으로는 이 끝내기를 막지 못해서, 오포지션을 몰라도 이기게 되기 때문이다. 다른 판에서는 탐색이 고른 수 그대로다.
 import { Chess } from './vendor/chess.js'
+import { pawnSideWins } from './kpk.js'
 
 export const MATE = 100000
 export const DEFAULT_NODE_BUDGET = 8000
@@ -226,6 +230,26 @@ function replay(startFen, moves) {
   return chess
 }
 
+// 킹+폰 대 킹에서 둘 차례인 쪽(엔진)이 킹만 남았으면, chosen({from, to}) 뒤의 판이 무승부(표로 보아)인지 본다.
+// 무승부면 chosen을, 아니면 무승부를 지키는 수 가운데 출발 칸·도착 칸 이름 순으로 맨 앞의 것을 돌려준다. 지키는 수가 없거나,
+// 표가 없거나, 그런 판이 아니면 chosen 그대로다. 폰을 잡는 수는 킹 둘만 남으므로 무승부를 지키는 수다.
+function holdKpkDraw(chess, chosen) {
+  if (pawnSideWins(chess) === null) return chosen
+  const pawn = chess.board().flat().find((p) => p && p.type === 'p')
+  if (pawn.color === chess.turn()) return chosen
+  const holds = (m) => {
+    chess.move(m)
+    const wins = pawnSideWins(chess) // 폰이 잡혔으면 null(킹 둘만 남아 무승부)
+    chess.undo()
+    return wins !== true
+  }
+  const moves = chess.moves({ verbose: true }).sort((a, b) => (a.from + a.to < b.from + b.to ? -1 : 1))
+  const mine = moves.find((m) => m.from === chosen.from && m.to === chosen.to)
+  if (holds(mine)) return chosen
+  const keep = moves.find(holds)
+  return keep ? { from: keep.from, to: keep.to } : chosen
+}
+
 // depth: 1(입문), 2(초급), 3(중급). 대국이 이미 끝났으면 null.
 // 돌려주는 수는 {from, to, promotion}. promotion은 승격일 때만 'q'.
 export function chooseMove({ startFen, moves = [], depth, nodeBudget = DEFAULT_NODE_BUDGET }) {
@@ -234,10 +258,11 @@ export function chooseMove({ startFen, moves = [], depth, nodeBudget = DEFAULT_N
   assertCore(chess)
   if (chess.isGameOver()) return null
   const r = search(chess, depth, nodeBudget)
+  const move = holdKpkDraw(chess, { from: square(r.move.from), to: square(r.move.to) })
   return {
-    from: square(r.move.from),
-    to: square(r.move.to),
-    promotion: r.move.promotion || undefined,
+    from: move.from,
+    to: move.to,
+    promotion: move.from === square(r.move.from) && move.to === square(r.move.to) ? r.move.promotion || undefined : undefined,
     score: r.score,
     depthReached: r.depthReached,
     nodes: r.nodes,

@@ -125,7 +125,7 @@ export function createLessonRunner(lesson) {
   }
 
   // 대결 스텝의 대국이 끝까지 갔다(체크메이트, 무승부, 기권 가운데 무엇이든). 목표가 'finish'인 대결만 받는다
-  // ('win-material'은 submitGoalMet과 skipSpar). 앱은 다시 열었을 때 그 대국이 한 번이라도 끝까지 갔으면 이것을 부른다.
+  // ('win-material'과 'checkmate'는 submitGoalMet과 skipSpar). 앱은 다시 열었을 때 그 대국이 한 번이라도 끝까지 갔으면 이것을 부른다.
   function submitGameEnd() {
     if (index >= lesson.steps.length) throw new Error('이미 끝난 레슨입니다')
     const s = step()
@@ -134,23 +134,24 @@ export function createLessonRunner(lesson) {
     satisfied = true
   }
 
-  // 목표가 'win-material'(기물 점수로 앞서기)인 대결. 판정은 앱이 material.js로 하고, 이룬 것만 알린다.
-  function materialSpar() {
+  // 목표가 'win-material'(기물 점수로 앞서기)이나 'checkmate'(체크메이트로 이기기)인 대결. 판정은 앱이 material.js로 하고,
+  // 이룬 것만 알린다.
+  function goalSpar() {
     if (index >= lesson.steps.length) throw new Error('이미 끝난 레슨입니다')
     const s = step()
     if (s.type !== 'spar') throw new Error('spar 스텝이 아닙니다')
-    if (s.goal !== 'win-material') throw new Error(`기물 점수 목표가 아닙니다: ${s.goal}`)
+    if (s.goal !== 'win-material' && s.goal !== 'checkmate') throw new Error(`목표가 있는 대결이 아닙니다: ${s.goal}`)
   }
 
-  // 엔진이 둔 뒤 기물 점수로 lead점 이상 앞섰다(또는 체크메이트로 이겼다).
+  // 목표를 이뤘다(엔진이 둔 뒤 기물 점수로 lead점 이상 앞섰다, 또는 체크메이트로 이겼다).
   function submitGoalMet() {
-    materialSpar()
+    goalSpar()
     satisfied = true
   }
 
   // 목표를 이루기 전에 대국이 끝나서, 사용자가 이 스텝을 건너뛰기로 했다.
   function skipSpar() {
-    materialSpar()
+    goalSpar()
     satisfied = true
   }
 
